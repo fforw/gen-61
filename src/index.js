@@ -3,6 +3,7 @@ import "./style.css"
 import Color, { getLuminance } from "./Color"
 
 import { voronoi } from "d3-voronoi"
+import { randomPaletteWithBlack } from "./randomPalette"
 
 
 const PHI = (1 + Math.sqrt(5)) / 2;
@@ -58,7 +59,7 @@ let ctx;
 let canvas;
 
 const resolution = 80
-const FORCE_LEN = 32
+const FORCE_LEN = 16
 const BASE_FORCE = 4000000
 
 function drawArrow(x0, y0, x1, y1)
@@ -99,6 +100,58 @@ function drawArrow(x0, y0, x1, y1)
 
 const key = (x,y) => x + "/" + y
 
+
+function getFlow(diagram, currentX, currentY, sites, forces)
+{
+    const current = diagram.find(currentX, currentY)
+    const index = sites.get(key(current[0], current[1]))
+    const {halfedges} = diagram.cells[index]
+
+    const nodes = [{site: current, index}]
+    halfedges.forEach(
+        e => {
+            const {left, right} = diagram.edges[e]
+            const other = current[0] === left[0] && current[1] === left[1] ? right : left
+            if (other)
+            {
+                nodes.push(
+                    {
+                        site: other,
+                        index: sites.get(key(other[0], other[1]))
+                    }
+                )
+            }
+        }
+    )
+
+    let dx = 0
+    let dy = 0
+
+    const influences = []
+    nodes.forEach(
+        ({site, index}) => {
+
+            const [fx, fy] = forces[index]
+
+            const x = currentX - site[0]
+            const y = currentY - site[1]
+
+            const influence = Math.min(1, BASE_FORCE / Math.pow(x * x + y * y, 2))
+            dx += fx * influence
+            dy += fy * influence
+
+            influences.push(influence)
+        }
+    )
+    console.log("INFLUENCES", influences)
+
+    const f = 1 / Math.sqrt(dx * dx + dy * dy)
+    dx *= f
+    dy *= f
+    return [dx, dy]
+}
+
+
 domready(
     () => {
 
@@ -124,7 +177,7 @@ domready(
 
         const paint = () => {
 
-            const palette = ["#454d66", "#309975", "#58b368", "#dad873", "#efeeb4"]//["#ffa822", "#134e6f", "#ff6150", "#1ac0c6", "#dee0e6"]//randomPaletteWithBlack()
+            const palette = randomPaletteWithBlack()
 
             const bgColor = palette[0 | Math.random() * palette.length]
             config.palette = palette
@@ -140,7 +193,7 @@ domready(
 
             const pow = 0.2 + Math.random()
 
-            let area = (width * height) * (0.15 + 0.85 * Math.random() )
+            let area = (width * height) * (0.25 + 0.75 * Math.random() )
 
             const pts = []
             const forces = []
@@ -222,61 +275,57 @@ domready(
 
             //polygons.forEach( p => drawPolygon(p, config.palette))
 
-            for (let currentY = 0; currentY < height; currentY += FORCE_LEN* 0.4     )
+            // for (let currentY = 0; currentY < height; currentY += FORCE_LEN* 0.4     )
+            // {
+            //     for (let currentX = 0; currentX < width; currentX += FORCE_LEN * 0.4)
+            //     {
+            //         const [dx, dy] = getFlow(diagram, currentX, currentY, sites, forces)
+            //         drawArrow( currentX, currentY,currentX + dx * FORCE_LEN, currentY + dy * FORCE_LEN)
+            //    }
+            // }
+
+            const imageData = ctx.getImageData(0,0,width,height)
+
+            const { data } = imageData
+
+            const line  = width * 4
+
+            const offset = (x,y) => Math.round(y) * line + Math.round(x) * 4
+
+            for (let i=0; i < 100000; i++)
             {
-                for (let currentX = 0; currentX < width; currentX += FORCE_LEN * 0.4)
-                {
-                    const current = diagram.find(currentX,currentY)
-                    const index = sites.get(key(current[0],current[1]))
-                    const { halfedges } = diagram.cells[index]
+                const x = 0 | Math.random() * width
+                const y = 0 | Math.random() * height
 
-                    const nodes = [{site: current, index}]
-                    halfedges.forEach(
-                        e => {
-                            const { left, right } = diagram.edges[e]
-                            const other = current[0] === left[0] && current[1] === left[1] ? right : left
-                            if (other)
-                            {
-                                nodes.push(
-                                    {
-                                        site: other,
-                                        index: sites.get(key(other[0],other[1]))
-                                    }
-                                )
-                            }
-                        }
-                    )
+                const [dx,dy] = getFlow(diagram, x, y, sites, forces)
 
-                    let dx = 0
-                    let dy = 0
+                const dst = offset(x,y)
+                const src = offset(x + dx * FORCE_LEN, y + dy * FORCE_LEN)
 
-                    const influences = []
-                    nodes.forEach(
-                        ({site, index}) => {
+                data[dst + 0] = data[src + 0]
+                data[dst + 1] = data[src + 1]
+                data[dst + 2] = data[src + 2]
+                data[dst + 3] = data[src + 3]
 
-                            const [fx,fy] = forces[index]
+                data[dst + 0 + 4] = data[src + 0 + 4]
+                data[dst + 1 + 4] = data[src + 1 + 4]
+                data[dst + 2 + 4] = data[src + 2 + 4]
+                data[dst + 3 + 4] = data[src + 3 + 4]
+
+                data[dst + 0 + line ] = data[src + 0 + line ]
+                data[dst + 1 + line ] = data[src + 1 + line ]
+                data[dst + 2 + line ] = data[src + 2 + line ]
+                data[dst + 3 + line ] = data[src + 3 + line ]
+
+                data[dst + 0 + 4 + line ] = data[src + 0 + 4 + line]
+                data[dst + 1 + 4 + line ] = data[src + 1 + 4 + line]
+                data[dst + 2 + 4 + line ] = data[src + 2 + 4 + line]
+                data[dst + 3 + 4 + line ] = data[src + 3 + 4 + line]
 
 
-                            const x = currentX - site[0]
-                            const y = currentY - site[1]
-
-                            const influence = Math.min(1, BASE_FORCE/Math.pow(x*x+y*y, 2))
-                            dx += fx * influence
-                            dy += fy * influence
-
-                            influences.push(influence)
-                        }
-                    )
-                        console.log("INFLUENCES", influences)
-
-                    const f = 1/Math.sqrt(dx * dx + dy * dy)
-                    dx *= f
-                    dy *= f
-
-
-                    drawArrow( currentX, currentY,currentX + dx * FORCE_LEN, currentY + dy * FORCE_LEN)
-               }
             }
+
+            ctx.putImageData(imageData, 0, 0)
 
             // forces.forEach( (f,idx) => {
             //
