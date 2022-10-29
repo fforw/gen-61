@@ -10,6 +10,10 @@ const PHI = (1 + Math.sqrt(5)) / 2;
 const TAU = Math.PI * 2;
 const DEG2RAD_FACTOR = TAU / 360;
 
+const resolution = 80
+const FORCE_LEN = 18
+const BASE_FORCE = 5000000
+
 const config = {
     width: 0,
     height: 0,
@@ -58,9 +62,6 @@ function drawPolygon(polygon, palette)
 let ctx;
 let canvas;
 
-const resolution = 80
-const FORCE_LEN = 16
-const BASE_FORCE = 4000000
 
 function drawArrow(x0, y0, x1, y1)
 {
@@ -101,54 +102,207 @@ function drawArrow(x0, y0, x1, y1)
 const key = (x,y) => x + "/" + y
 
 
-function getFlow(diagram, currentX, currentY, sites, forces)
-{
-    const current = diagram.find(currentX, currentY)
-    const index = sites.get(key(current[0], current[1]))
-    const {halfedges} = diagram.cells[index]
 
-    const nodes = [{site: current, index}]
-    halfedges.forEach(
-        e => {
-            const {left, right} = diagram.edges[e]
-            const other = current[0] === left[0] && current[1] === left[1] ? right : left
-            if (other)
+
+
+function wrap(n, max)
+{
+    const m = n % max
+    if (m < 0)
+    {
+        return max + m
+    }
+    else
+    {
+        return Math.abs(m)
+    }
+}
+
+
+function step( flowMap, data)
+{
+    const { width, height } = config
+
+    const line  = width * 4
+    const offset = (x,y) => Math.round(y) * line + Math.round(x) * 4
+
+    let off = 0
+    for (let y = 0; y < height; y++)
+    {
+        for (let x = 0; x < width; x++)
+        {
+            const ox = flowMap[off++]
+            const oy = flowMap[off++]
+
+            let dx = Math.floor(ox)
+            let dy = Math.floor(oy)
+            let fx = ox - dx
+            let fy = oy - dy
+
+            const src0 = (wrap(y + dy, height) * width + wrap(x + dx, width)) * 4
+            const src1 = (wrap(y + dy, height) * width + wrap(x + dx + 1, width)) * 4
+            const src2 = (wrap(y + dy + 1, height) * width + wrap(x + dx, width)) * 4
+            const src3 = (wrap(y + dy + 1, height) * width + wrap(x + dx + 1, width)) * 4
+            const dst = (y * width + x) * 4
+
+            const tlr = data[src0    ]
+            const tlg = data[src0 + 1]
+            const tlb = data[src0 + 2]
+            const trr = data[src1    ]
+            const trg = data[src1 + 1]
+            const trb = data[src1 + 2]
+            const blr = data[src2    ]
+            const blg = data[src2 + 1]
+            const blb = data[src2 + 2]
+            const brr = data[src3    ]
+            const brg = data[src3 + 1]
+            const brb = data[src3 + 2]
+
+            const r0 = tlr + (trr - tlr) * fx
+            const g0 = tlg + (trg - tlg) * fx
+            const b0 = tlb + (trb - tlb) * fx
+            const r1 = blr + (brr - blr) * fx
+            const g1 = blg + (brg - blg) * fx
+            const b1 = blb + (brb - blb) * fx
+
+            data[dst    ] = Math.round(r0 + (r1 - r0) * fy)
+            data[dst + 1] = Math.round(g0 + (g1 - g0) * fy)
+            data[dst + 2] = Math.round(b0 + (b1 - b0) * fy)
+        }
+    }
+}
+
+class Job
+{
+    running = true
+
+    constructor(lifeTime, fn)
+    {
+
+        const tick = () => {
+
+            fn();
+
+            if (lifeTime-- < 0)
             {
-                nodes.push(
+                this.running = false
+            }
+
+            if (this.running)
+            {
+                requestAnimationFrame(tick)
+            }
+
+        }
+        requestAnimationFrame(tick)
+    }
+}
+
+function randomAlpha()
+{
+    return 0.33 + 0.62 * Math.random()
+}
+
+let job = null;
+
+
+class FlowMap {
+    diagram = null
+    sites = null
+    forces = null
+    nodesCache = new Map()
+
+    constructor(diagram, sites, forces)
+    {
+        this.diagram = diagram
+        this.sites = sites
+        this.forces = forces
+    }
+
+    getFlow(currentX, currentY)
+    {
+        const { diagram, sites, forces, nodesCache } = this
+        
+        const current = diagram.find(currentX, currentY)
+        const index = sites.get(key(current[0], current[1]))
+
+        let nodes = nodesCache.get(index)
+        if (!nodes)
+        {
+            // noinspection SpellCheckingInspection
+            const { halfedges } = diagram.cells[index]
+
+            nodes = [{site: current, index}]
+            halfedges.forEach(
+                e => {
+                    const {left, right} = diagram.edges[e]
+                    const other = current[0] === left[0] && current[1] === left[1] ? right : left
+                    if (other)
                     {
-                        site: other,
-                        index: sites.get(key(other[0], other[1]))
+                        nodes.push(
+                            {
+                                site: other,
+                                index: sites.get(key(other[0], other[1]))
+                            }
+                        )
                     }
-                )
+                }
+            )
+
+            nodesCache.set(index, nodes)
+        }
+
+        let dx = 0
+        let dy = 0
+
+        const influences = []
+        nodes.forEach(
+            ({site, index}) => {
+
+                const [fx, fy] = forces[index]
+
+                const x = currentX - site[0]
+                const y = currentY - site[1]
+
+                const influence = Math.min(1, BASE_FORCE / Math.pow(x * x + y * y, 2))
+                dx += fx * influence
+                dy += fy * influence
+
+                influences.push(influence)
+            }
+        )
+        //console.log("INFLUENCES", influences)
+
+        const f = 1 / Math.sqrt(dx * dx + dy * dy)
+        dx *= f
+        dy *= f
+        return [dx, dy]
+    }
+
+    createFlowMap(width, height)
+    {
+        const flowMap = new Float32Array(width * height * 2)
+
+        let off = 0
+        for (let y = 0; y < height; y++)
+        {
+            for (let x = 0; x < width; x++)
+            {
+                const [dx, dy] = this.getFlow(x, y)
+
+                flowMap[off++] = dx
+                flowMap[off++] = dy
             }
         }
-    )
 
-    let dx = 0
-    let dy = 0
+        return flowMap
+    }
 
-    const influences = []
-    nodes.forEach(
-        ({site, index}) => {
 
-            const [fx, fy] = forces[index]
-
-            const x = currentX - site[0]
-            const y = currentY - site[1]
-
-            const influence = Math.min(1, BASE_FORCE / Math.pow(x * x + y * y, 2))
-            dx += fx * influence
-            dy += fy * influence
-
-            influences.push(influence)
-        }
-    )
-    console.log("INFLUENCES", influences)
-
-    const f = 1 / Math.sqrt(dx * dx + dy * dy)
-    dx *= f
-    dy *= f
-    return [dx, dy]
+    static create(width, height, diagram, sites, forces)
+    {
+        return new FlowMap(diagram, sites, forces).createFlowMap(width, height)
+    }
 }
 
 
@@ -176,6 +330,12 @@ domready(
         ]
 
         const paint = () => {
+
+            if (job)
+            {
+                job.running = false
+                job = null
+            }
 
             const palette = randomPaletteWithBlack()
 
@@ -213,7 +373,7 @@ domready(
                 let angle
                 if (!choice)
                 {
-                    ctx.fillStyle = Color.from(fillColor).toRGBA(0.1 + 0.85 * Math.random())
+                    ctx.fillStyle = Color.from(fillColor).toRGBA(randomAlpha())
                 }
                 else
                 {
@@ -226,7 +386,7 @@ domready(
                         y + Math.sin(angle) * radius
                     )
 
-                    gradient.addColorStop(0, Color.from(fillColor).toRGBA(0.1 + 0.9 * Math.random()))
+                    gradient.addColorStop(0, Color.from(fillColor).toRGBA(0.33 + 0.62 * Math.random()))
                     gradient.addColorStop(1, Color.from(fillColor).toRGBA(0))
                     ctx.fillStyle = gradient
                 }
@@ -270,70 +430,23 @@ domready(
             const diagram = v(pts)
             // console.log("DIAGRAM", diagram)
 
-            const polygons = diagram.polygons()
             ctx.strokeStyle = fgColor
 
-            //polygons.forEach( p => drawPolygon(p, config.palette))
+            // const polygons = diagram.polygons()
+            // polygons.forEach( p => drawPolygon(p, config.palette))
 
-            // for (let currentY = 0; currentY < height; currentY += FORCE_LEN* 0.4     )
-            // {
-            //     for (let currentX = 0; currentX < width; currentX += FORCE_LEN * 0.4)
-            //     {
-            //         const [dx, dy] = getFlow(diagram, currentX, currentY, sites, forces)
-            //         drawArrow( currentX, currentY,currentX + dx * FORCE_LEN, currentY + dy * FORCE_LEN)
-            //    }
-            // }
+            const flowMap = FlowMap.create(width, height, diagram, sites, forces)
 
             const imageData = ctx.getImageData(0,0,width,height)
-
             const { data } = imageData
 
-            const line  = width * 4
-
-            const offset = (x,y) => Math.round(y) * line + Math.round(x) * 4
-
-            for (let i=0; i < 100000; i++)
-            {
-                const x = 0 | Math.random() * width
-                const y = 0 | Math.random() * height
-
-                const [dx,dy] = getFlow(diagram, x, y, sites, forces)
-
-                const dst = offset(x,y)
-                const src = offset(x + dx * FORCE_LEN, y + dy * FORCE_LEN)
-
-                data[dst + 0] = data[src + 0]
-                data[dst + 1] = data[src + 1]
-                data[dst + 2] = data[src + 2]
-                data[dst + 3] = data[src + 3]
-
-                data[dst + 0 + 4] = data[src + 0 + 4]
-                data[dst + 1 + 4] = data[src + 1 + 4]
-                data[dst + 2 + 4] = data[src + 2 + 4]
-                data[dst + 3 + 4] = data[src + 3 + 4]
-
-                data[dst + 0 + line ] = data[src + 0 + line ]
-                data[dst + 1 + line ] = data[src + 1 + line ]
-                data[dst + 2 + line ] = data[src + 2 + line ]
-                data[dst + 3 + line ] = data[src + 3 + line ]
-
-                data[dst + 0 + 4 + line ] = data[src + 0 + 4 + line]
-                data[dst + 1 + 4 + line ] = data[src + 1 + 4 + line]
-                data[dst + 2 + 4 + line ] = data[src + 2 + 4 + line]
-                data[dst + 3 + 4 + line ] = data[src + 3 + 4 + line]
-
-
-            }
-
-            ctx.putImageData(imageData, 0, 0)
-
-            // forces.forEach( (f,idx) => {
-            //
-            //     const [x,y] = pts[idx]
-            //     const [fx,fy] = forces[idx]
-            //
-            //     drawArrow( x, y,x + fx * FORCE_LEN, y + fy * FORCE_LEN)
-            // })
+            job = new Job(
+                Math.round(5 + Math.random() * 20),
+                () => {
+                    step(flowMap, data)
+                    ctx.putImageData(imageData, 0, 0)
+                }
+            )
         }
 
         paint()
