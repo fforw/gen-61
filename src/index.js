@@ -11,7 +11,7 @@ const TAU = Math.PI * 2;
 const DEG2RAD_FACTOR = TAU / 360;
 
 const resolution = 80
-const FORCE_LEN = 18
+const FORCE_LEN = 1
 const BASE_FORCE = 5000000
 
 const config = {
@@ -99,11 +99,13 @@ function drawArrow(x0, y0, x1, y1)
 }
 
 
-const key = (x,y) => x + "/" + y
-
-
-
-
+/**
+ * Key function for the FlowDistortion site map. Creates string representations for integer coordinates
+ * @param {Number} x    x-coordinate
+ * @param {Number} y    y-coordinate
+ * @returns {string} composite key
+ */
+const siteKey = (x,y) => x + "/" + y
 
 function wrap(n, max)
 {
@@ -119,20 +121,20 @@ function wrap(n, max)
 }
 
 
-function step( flowMap, data)
+function step( flowDistortion, imageData)
 {
     const { width, height } = config
 
-    const line  = width * 4
-    const offset = (x,y) => Math.round(y) * line + Math.round(x) * 4
+    const { data } = imageData
+    const { flowMap } = flowDistortion
 
     let off = 0
     for (let y = 0; y < height; y++)
     {
-        for (let x = 0; x < width; x++)
+        for (let x = 0 ; x < width; x++)
         {
-            const ox = flowMap[off++]
-            const oy = flowMap[off++]
+            const ox = flowMap[off++] * FORCE_LEN
+            const oy = flowMap[off++] * FORCE_LEN
 
             let dx = Math.floor(ox)
             let dy = Math.floor(oy)
@@ -176,7 +178,7 @@ class Job
 {
     running = true
 
-    constructor(lifeTime, fn)
+    constructor(lifeTime, fn, end)
     {
 
         const tick = () => {
@@ -192,6 +194,10 @@ class Job
             {
                 requestAnimationFrame(tick)
             }
+            else
+            {
+                end()
+            }
 
         }
         requestAnimationFrame(tick)
@@ -206,25 +212,62 @@ function randomAlpha()
 let job = null;
 
 
-class FlowMap {
+
+class FlowDistortion {
+
+    width = -1
+    height = -1
+
+    pts = []
+    forces = []
+    /**
+     * Lookup map for look up site indexes from their coordinate keys (e.g. "10x12")
+     * @type {*}
+     */
+    sites = new Map()
+
+    /**
+     * Voronoi diagram
+     */
     diagram = null
-    sites = null
-    forces = null
+
+    /**
+     * Baked flow map
+     * @type {Float32Array}
+     */
+    flowMap = null
+
     nodesCache = new Map()
 
-    constructor(diagram, sites, forces)
+    constructor(width, height)
     {
-        this.diagram = diagram
-        this.sites = sites
-        this.forces = forces
+        this.width = width
+        this.height = height
     }
+
+    addPoint(x,y, fx,fy)
+    {
+        const { sites, pts, forces } = this
+
+        sites.set(siteKey(x, y), pts.length)
+        pts.push([
+            x,
+            y
+        ])
+        forces.push([
+           fx, fy
+        ])
+
+    }
+
+
 
     getFlow(currentX, currentY)
     {
         const { diagram, sites, forces, nodesCache } = this
-        
+
         const current = diagram.find(currentX, currentY)
-        const index = sites.get(key(current[0], current[1]))
+        const index = sites.get(siteKey(current[0], current[1]))
 
         let nodes = nodesCache.get(index)
         if (!nodes)
@@ -242,7 +285,7 @@ class FlowMap {
                         nodes.push(
                             {
                                 site: other,
-                                index: sites.get(key(other[0], other[1]))
+                                index: sites.get(siteKey(other[0], other[1]))
                             }
                         )
                     }
@@ -279,9 +322,22 @@ class FlowMap {
         return [dx, dy]
     }
 
-    createFlowMap(width, height)
+    prepareMap()
     {
+        const { width, height, pts } = this
+
+        // console.log("SITES", sites)
+        // console.log("POINTS", pts)
+
+        const v = voronoi().extent([[0,0], [width, height]])
+        const diagram = v(pts)
+
+        // const polygons = diagram.polygons()
+        // polygons.forEach( p => drawPolygon(p, config.palette))
+
         const flowMap = new Float32Array(width * height * 2)
+        this.diagram = diagram
+        this.flowMap = flowMap
 
         let off = 0
         for (let y = 0; y < height; y++)
@@ -295,14 +351,40 @@ class FlowMap {
             }
         }
 
-        return flowMap
     }
+}
 
 
-    static create(width, height, diagram, sites, forces)
+function copyRandomSlices(id0, id1)
+{
+    const { width, height } = config
+
+    const { data : d0 } = id0
+    const { data : d1 } = id1
+    
+    let from1 = false
+    let x = 0
+    do
     {
-        return new FlowMap(diagram, sites, forces).createFlowMap(width, height)
-    }
+        const slice = Math.round( 1 + 200 * Math.pow( Math.random(), 12))
+        if (from1)
+        {
+            for (let y=0; y < height; y++)
+            {
+                for (let x1=0; x1 < slice; x1++)
+                {
+                    const off = (y * width + x + x1) * 4
+                    d0[ off     ] = (d1[off    ] + d0[ off     ] * 2)/3
+                    d0[ off + 1 ] = (d1[off + 1] + d0[ off + 1 ] * 2)/3
+                    d0[ off + 2 ] = (d1[off + 2] + d0[ off + 2 ] * 2)/3
+                }
+            }
+
+        }
+        x += slice;
+        from1 = !from1
+    } while (x < width)
+
 }
 
 
@@ -344,24 +426,32 @@ domready(
             config.bg = bgColor
             ctx.fillStyle = bgColor
 
-            const fgColor = getLuminance(Color.from(bgColor)) < 10000 ? "#fff" : "#000"
+            const fgColor = getLuminance(Color.from(bgColor)) < 10000 ? palette[palette.length - 1] : palette[0]
+            ctx.strokeStyle = fgColor
 
             ctx.fillRect(0, 0, width, height)
 
 
             const size = Math.min(width, height)
 
-            const pow = 0.2 + Math.random()
+            const pow = 0.2 + 0.4 * Math.random()
+            const fArea = 0.33 + 0.4 * Math.random()
+            const circleChance = 0.2 + 0.6 * Math.random()
+            let area = (width * height) * fArea
 
-            let area = (width * height) * (0.25 + 0.75 * Math.random() )
+            console.log("%c\u00a0%c\u00a0%c\u00a0%c\u00a0%c\u00a0%c\u00a0:", ... palette.map(c => `color: ${c}; background: ${c};`), "data:", palette )
+            console.log({ fArea, pow, circleChance} )
 
-            const pts = []
-            const forces = []
+            const fd = new FlowDistortion(
+                width,
+                height
+            )
 
-            const sites = new Map()
+            const shapes = [];
+
             while (area > 0)
             {
-                const fillColor = getColorExcluding(bgColor, fgColor)
+                const fillColor = getColorExcluding(bgColor)
 
                 const choice = 0 | Math.random() * 4
 
@@ -371,9 +461,10 @@ domready(
                 const y = 0 | Math.random() * height
 
                 let angle
+                let fillStyle
                 if (!choice)
                 {
-                    ctx.fillStyle = Color.from(fillColor).toRGBA(randomAlpha())
+                    fillStyle = Color.from(fillColor).toRGBA(randomAlpha())
                 }
                 else
                 {
@@ -388,65 +479,96 @@ domready(
 
                     gradient.addColorStop(0, Color.from(fillColor).toRGBA(0.33 + 0.62 * Math.random()))
                     gradient.addColorStop(1, Color.from(fillColor).toRGBA(0))
-                    ctx.fillStyle = gradient
+                    fillStyle = gradient
                 }
 
-                ctx.beginPath()
-                ctx.moveTo(x + radius, y)
-                ctx.arc(x, y, +radius, 0, TAU, true)
-                ctx.fill()
+                const fn = (doFill, doStroke) => {
 
-                const len = TAU * radius
-                const count = Math.floor( len/ resolution);
-                const step = TAU/count
-                angle = 0
+                    ctx.fillStyle = fillStyle
 
-                const offset = Math.floor(Math.random() * 4) * TAU / 4
+                    if (Math.random() < circleChance)
+                    {
+                        ctx.beginPath()
+                        ctx.moveTo(x + radius, y)
+                        ctx.arc(x, y, +radius, 0, TAU, true)
+                        if (doFill)
+                        {
+                            ctx.fill()
+                        }
+                        if (doStroke)
+                        {
+                            ctx.stroke()
+                        }
+                    }
+                    else
+                    {
+                        const size = Math.sqrt(Math.PI) * radius
+                        const hSize = size / 2
+                        if (doFill)
+                        {
 
-                for (let i=0; i < count; i++)
+                        }
+                        ctx.fillRect(x - hSize, y - hSize, size, size )
+                        if (doStroke)
+                        {
+                            ctx.strokeRect(x - hSize, y - hSize, size, size)
+                        }
+                    }
+                }
+
+                fn(true, Math.random() < 0.25)
+                shapes.push(fn)
+
+                if (Math.random() < 0.8)
                 {
-                    const sx = Math.round(x + Math.cos(angle) * radius)
-                    const sy = Math.round(y + Math.sin(angle) * radius)
-                    sites.set(key(sx,sy), pts.length)
-                    pts.push([
-                        sx,
-                        sy
-                    ])
-                    forces.push([
-                        Math.cos(angle + offset),
-                        Math.sin(angle + offset)
-                    ])
+                    const len = TAU * radius
+                    const count = Math.floor( len/ resolution);
+                    const step = TAU/count
 
-                    angle += step
+                    const offset = Math.floor(Math.random() * 4) * TAU / 4
+                    let angle = 0
+                    for (let i = 0; i < count; i++)
+                    {
+                        const sx = Math.round(x + Math.cos(angle) * radius)
+                        const sy = Math.round(y + Math.sin(angle) * radius)
+
+                        const a2 = angle + offset
+                        fd.addPoint(
+                            sx,
+                            sy,
+                            Math.cos(a2),
+                            Math.sin(a2)
+                        )
+                        angle += step
+                    }
+
+                    area -= Math.PI * radius * radius
                 }
-
-                area -= Math.PI * radius * radius
-
             }
-            // console.log("SITES", sites)
-            // console.log("POINTS", pts)
 
-            const v = voronoi().extent([[0,0], [width, height]])
-            const diagram = v(pts)
-            // console.log("DIAGRAM", diagram)
 
-            ctx.strokeStyle = fgColor
-
-            // const polygons = diagram.polygons()
-            // polygons.forEach( p => drawPolygon(p, config.palette))
-
-            const flowMap = FlowMap.create(width, height, diagram, sites, forces)
+            fd.prepareMap()
 
             const imageData = ctx.getImageData(0,0,width,height)
-            const { data } = imageData
+            const copy = ctx.getImageData(0,0,width,height)
 
             job = new Job(
-                Math.round(5 + Math.random() * 20),
+                Math.round(4 + Math.random() * 12),
                 () => {
-                    step(flowMap, data)
+
+                    shapes[0|Math.random() * shapes.length](false, true)
+                    step(fd, imageData)
                     ctx.putImageData(imageData, 0, 0)
+                },
+                () => {
+                    copyRandomSlices(imageData, copy)
+                    ctx.putImageData(imageData, 0, 0)
+
                 }
             )
+
+
+
         }
 
         paint()
