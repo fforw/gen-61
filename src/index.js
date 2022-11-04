@@ -121,6 +121,18 @@ function wrap(n, max)
 }
 
 
+const toLinearPower = 2.2
+const toRGBPower = 1/2.2
+function toLinear(gun)
+{
+    return gun * gun
+}
+function toRGB(gun)
+{
+    return Math.sqrt(gun)
+}
+
+
 function step( flowDistortion, imageData)
 {
     const { width, height } = config
@@ -147,18 +159,18 @@ function step( flowDistortion, imageData)
             const src3 = (wrap(y + dy + 1, height) * width + wrap(x + dx + 1, width)) * 4
             const dst = (y * width + x) * 4
 
-            const tlr = data[src0    ]
-            const tlg = data[src0 + 1]
-            const tlb = data[src0 + 2]
-            const trr = data[src1    ]
-            const trg = data[src1 + 1]
-            const trb = data[src1 + 2]
-            const blr = data[src2    ]
-            const blg = data[src2 + 1]
-            const blb = data[src2 + 2]
-            const brr = data[src3    ]
-            const brg = data[src3 + 1]
-            const brb = data[src3 + 2]
+            const tlr = toLinear(data[src0    ])
+            const tlg = toLinear(data[src0 + 1])
+            const tlb = toLinear(data[src0 + 2])
+            const trr = toLinear(data[src1    ])
+            const trg = toLinear(data[src1 + 1])
+            const trb = toLinear(data[src1 + 2])
+            const blr = toLinear(data[src2    ])
+            const blg = toLinear(data[src2 + 1])
+            const blb = toLinear(data[src2 + 2])
+            const brr = toLinear(data[src3    ])
+            const brg = toLinear(data[src3 + 1])
+            const brb = toLinear(data[src3 + 2])
 
             const r0 = tlr + (trr - tlr) * fx
             const g0 = tlg + (trg - tlg) * fx
@@ -167,9 +179,9 @@ function step( flowDistortion, imageData)
             const g1 = blg + (brg - blg) * fx
             const b1 = blb + (brb - blb) * fx
 
-            data[dst    ] = Math.round(r0 + (r1 - r0) * fy)
-            data[dst + 1] = Math.round(g0 + (g1 - g0) * fy)
-            data[dst + 2] = Math.round(b0 + (b1 - b0) * fy)
+            data[dst    ] = Math.round(toRGB(r0 + (r1 - r0) * fy))
+            data[dst + 1] = Math.round(toRGB(g0 + (g1 - g0) * fy))
+            data[dst + 2] = Math.round(toRGB(b0 + (b1 - b0) * fy))
         }
     }
 }
@@ -504,10 +516,6 @@ domready(
                     {
                         const size = Math.sqrt(Math.PI) * radius
                         const hSize = size / 2
-                        if (doFill)
-                        {
-
-                        }
                         ctx.fillRect(x - hSize, y - hSize, size, size )
                         if (doStroke)
                         {
