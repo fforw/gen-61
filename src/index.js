@@ -5,6 +5,11 @@ import Color, { getLuminance } from "./Color"
 import { voronoi } from "d3-voronoi"
 import { randomPaletteWithBlack } from "./randomPalette"
 
+import queryString from "query-string"
+const params = queryString.parse(location.search)
+
+const errorRate = +(params.err || "0.2");
+
 
 const PHI = (1 + Math.sqrt(5)) / 2;
 const TAU = Math.PI * 2;
@@ -358,8 +363,15 @@ class FlowDistortion {
             {
                 const [dx, dy] = this.getFlow(x, y)
 
-                flowMap[off++] = dx
-                flowMap[off++] = dy
+                const angle = Math.random() * TAU
+                const errX = errorRate * Math.cos(angle) + dx
+                const errY = errorRate * Math.sin(angle) + dy
+
+                const f = 1/Math.sqrt(errX*errX + errY * errY)
+
+
+                flowMap[off++] = errX * f
+                flowMap[off++] = errY * f
             }
         }
 
@@ -569,8 +581,8 @@ domready(
                     ctx.putImageData(imageData, 0, 0)
                 },
                 () => {
-                    copyRandomSlices(imageData, copy)
-                    ctx.putImageData(imageData, 0, 0)
+                    // copyRandomSlices(imageData, copy)
+                    // ctx.putImageData(imageData, 0, 0)
 
                 }
             )
