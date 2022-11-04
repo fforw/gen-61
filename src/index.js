@@ -6,6 +6,7 @@ import { voronoi } from "d3-voronoi"
 import { randomPaletteWithBlack } from "./randomPalette"
 
 import queryString from "query-string"
+import SimplexNoise from "simplex-noise"
 const params = queryString.parse(location.search)
 
 const errorRate = +(params.err || "0.2");
@@ -16,7 +17,7 @@ const TAU = Math.PI * 2;
 const DEG2RAD_FACTOR = TAU / 360;
 
 const resolution = 80
-const FORCE_LEN = 1
+const FORCE_LEN = 2
 const BASE_FORCE = 5000000
 
 const config = {
@@ -26,6 +27,8 @@ const config = {
     bg: "#000",
     directions: [0, TAU/2]
 };
+
+let noise
 
 function getColorExcluding(... exclusions)
 {
@@ -357,13 +360,18 @@ class FlowDistortion {
         this.flowMap = flowMap
 
         let off = 0
+        const nsx = 0.005 + Math.pow(Math.random(),2) * 0.05
+        const nsy = 0.005 + Math.pow(Math.random(),2) * 0.05
+
         for (let y = 0; y < height; y++)
         {
             for (let x = 0; x < width; x++)
             {
                 const [dx, dy] = this.getFlow(x, y)
 
-                const angle = Math.random() * TAU
+                const angle = noise.noise2D(x * nsx, y * nsy) * TAU/2
+
+                //const angle = Math.random() * TAU
                 const errX = errorRate * Math.cos(angle) + dx
                 const errY = errorRate * Math.sin(angle) + dy
 
@@ -412,6 +420,12 @@ function copyRandomSlices(id0, id1)
 }
 
 
+function logPalette(palette)
+{
+    console.log("%c\u00a0%c\u00a0%c\u00a0%c\u00a0%c\u00a0%c\u00a0:", ...palette.map(c => `color: ${c}; background: ${c};`), "data:", palette)
+}
+
+
 domready(
     () => {
 
@@ -436,6 +450,8 @@ domready(
         ]
 
         const paint = () => {
+
+            noise = new SimplexNoise()
 
             if (job)
             {
@@ -462,8 +478,7 @@ domready(
             const fArea = 0.33 + 0.4 * Math.random()
             const circleChance = 0.2 + 0.6 * Math.random()
             let area = (width * height) * fArea
-
-            console.log("%c\u00a0%c\u00a0%c\u00a0%c\u00a0%c\u00a0%c\u00a0:", ... palette.map(c => `color: ${c}; background: ${c};`), "data:", palette )
+            logPalette(palette)
             console.log({ fArea, pow, circleChance} )
 
             const fd = new FlowDistortion(
